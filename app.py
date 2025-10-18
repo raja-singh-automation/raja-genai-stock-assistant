@@ -25,20 +25,24 @@ st.markdown("""
         font-family: 'Segoe UI', sans-serif;
     }
     .card {
-        padding: 20px;
+        padding: 18px;
         border-radius: 15px;
         background-color: white;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.08);
         margin-bottom: 20px;
     }
     .buy {color: green; font-weight: bold;}
     .hold {color: orange; font-weight: bold;}
     .sell {color: red; font-weight: bold;}
+    .pos {color: green; font-weight: bold;}
+    .neg {color: red; font-weight: bold;}
+    .neu {color: gray; font-weight: bold;}
+    h3 {margin-bottom: 8px;}
     </style>
 """, unsafe_allow_html=True)
 
 st.title("📊 GenAI Stock Assistant")
-st.caption("AI-powered recommendations + Earnings Chatbot (RAG)")
+st.caption("AI-powered recommendations + News Sentiment + Earnings Chatbot (RAG)")
 
 # -----------------------------
 # Stock Data Functions
@@ -67,7 +71,8 @@ def fetch_stock_data(ticker: str):
             "RSI": float(hist["RSI"].iloc[-1]) if "RSI" in hist else None,
             "SMA50": float(hist["SMA50"].iloc[-1]) if "SMA50" in hist else None,
             "SMA200": float(hist["SMA200"].iloc[-1]) if "SMA200" in hist else None,
-            "History": hist
+            "History": hist,
+            "News": stock.news[:3]  # latest 3 news
         }
     except Exception as e:
         st.warning(f"Data fetch failed for {ticker}: {e}")
@@ -102,51 +107,81 @@ with st.sidebar:
                            value=",".join(default_tickers))
     tickers = [t.strip() for t in tickers.split(",") if t.strip()]
     price_min, price_max = st.slider("Price range (₹)", 1, 20000, (10, 5000), 1)
+    show_charts = st.checkbox("Show candlestick charts", value=False)
 
 tab1, tab2 = st.tabs(["📈 Recommendations", "🗂️ Chat with Earnings (RAG)"])
 
 # -----------------------------
-# Tab 1: Modern Recommendations
+# Tab 1: Modern Recommendations + Sentiment
 # -----------------------------
 with tab1:
-    st.subheader("✨ Stock Recommendations")
+    st.subheader("✨ Stock Recommendations with News Sentiment")
+
+    finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+
     data_rows = [fetch_stock_data(t) for t in tickers]
-    data_rows = [d for d in data_rows if d and d.get("Price")]
+    # ✅ Apply price filter
+    data_rows = [d for d in data_rows if d and d.get("Price") and price_min <= d["Price"] <= price_max]
 
     if not data_rows:
-        st.info("No stocks to display for selected filters.")
+        st.info("No stocks found in this price range.")
     else:
-        for stock in data_rows:
+        # ✅ Summary metrics
+        buy_count = sum(recommend(stock)[0] == "BUY" for stock in data_rows)
+        hold_count = sum(recommend(stock)[0] == "HOLD" for stock in data_rows)
+        sell_count = sum(recommend(stock)[0] == "SELL" for stock in data_rows)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("✅ BUY", buy_count)
+        c2.metric("⚖️ HOLD", hold_count)
+        c3.metric("❌ SELL", sell_count)
+
+        st.markdown("---")
+
+        # ✅ Stock cards grid
+        for i, stock in enumerate(data_rows):
             action, signals = recommend(stock)
 
-            # Card Layout
-            col1, col2 = st.columns([2, 3])
-            with col1:
+            # sentiment
+            news_headline = stock["News"][0]["title"] if stock["News"] else "No news found"
+            try:
+                sentiment = finbert(news_headline)[0]["label"].lower()
+            except:
+                sentiment = "neutral"
+            sentiment_html = {
+                "positive": "<span class='pos'>Positive</span>",
+                "negative": "<span class='neg'>Negative</span>",
+                "neutral": "<span class='neu'>Neutral</span>",
+            }.get(sentiment, sentiment)
+
+            if i % 2 == 0:
+                cols = st.columns(2)
+            with cols[i % 2]:
                 st.markdown(f"<div class='card'>"
                             f"<h3>{stock['Name']} ({stock['Ticker']})</h3>"
-                            f"<p>Sector: {stock['Sector']}</p>"
                             f"<p>💰 Price: ₹{stock['Price']}</p>"
                             f"<p>📊 P/E: {stock['PE']}, EPS: {stock['EPS']}</p>"
                             f"<p>📈 RSI: {round(stock['RSI'],2) if stock['RSI'] else 'NA'}</p>"
                             f"<p>🔍 Signals: {', '.join(signals) if signals else 'No strong signals'}</p>"
-                            f"<p>✅ Recommendation: "
-                            f"<span class='{action.lower()}'>{action}</span></p>"
+                            f"<p>✅ Recommendation: <span class='{action.lower()}'>{action}</span></p>"
+                            f"<p>📰 News: {news_headline}</p>"
+                            f"<p>📌 Sentiment: {sentiment_html}</p>"
                             f"</div>", unsafe_allow_html=True)
 
-            # Chart
-            with col2:
-                hist = stock["History"]
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(
-                    x=hist.index,
-                    open=hist['Open'], high=hist['High'],
-                    low=hist['Low'], close=hist['Close'],
-                    name="Price"
-                ))
-                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA50'], line=dict(color='blue', width=1), name="SMA50"))
-                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], line=dict(color='orange', width=1), name="SMA200"))
-                fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=300, template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
+                # optional chart
+                if show_charts:
+                    hist = stock["History"]
+                    fig = go.Figure()
+                    fig.add_trace(go.Candlestick(
+                        x=hist.index,
+                        open=hist['Open'], high=hist['High'],
+                        low=hist['Low'], close=hist['Close'],
+                        name="Price"
+                    ))
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA50'], line=dict(color='blue', width=1), name="SMA50"))
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], line=dict(color='orange', width=1), name="SMA200"))
+                    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=300, template="plotly_white")
+                    st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
 # Tab 2: Chat with Earnings (RAG)
