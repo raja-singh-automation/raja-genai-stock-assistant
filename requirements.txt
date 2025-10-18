@@ -1,7 +1,5 @@
-torch==2.2.0
-torchvision==0.17.0
+torch
 transformers
-datasets
 sentence-transformers
 faiss-cpu
 pypdf
@@ -11,5 +9,4 @@ numpy
 plotly
 scikit-learn
 streamlit
-langchain
 ta
