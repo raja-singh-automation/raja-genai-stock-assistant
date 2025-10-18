@@ -12,7 +12,7 @@ from transformers import pipeline
 # Page Config
 # -----------------------------
 st.set_page_config(
-    page_title="GenAI Stock Assistant",
+    page_title="Raja's GenAI Stock Assistant",
     page_icon="📊",
     layout="wide"
 )
@@ -117,7 +117,8 @@ tab1, tab2 = st.tabs(["📈 Recommendations", "🗂️ Chat with Earnings (RAG)"
 with tab1:
     st.subheader("✨ Stock Recommendations with News Sentiment")
 
-    finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    # ✅ Force FinBERT to CPU
+    finbert = pipeline("sentiment-analysis", model="ProsusAI/finbert", device=-1)
 
     data_rows = [fetch_stock_data(t) for t in tickers]
     # ✅ Apply price filter
@@ -234,7 +235,10 @@ with tab2:
             D, I = st.session_state.rag_index.search(q_emb, 3)
             retrieved = [st.session_state.rag_docs[i] for i in I[0]]
             context = "\n\n".join([f"[{r['meta']['source']} p.{r['meta']['page']}] {r['text']}" for r in retrieved])
-            qa = pipeline("text2text-generation", model="google/flan-t5-base")
+            
+            # ✅ Force FLAN-T5 to CPU
+            qa = pipeline("text2text-generation", model="google/flan-t5-base", device=-1)
+            
             prompt = f"Answer the question using only this CONTEXT:\n{context}\nQUESTION: {query}\nANSWER:"
             out = qa(prompt, max_length=256)[0]["generated_text"]
             st.write("### 💬 Answer")
